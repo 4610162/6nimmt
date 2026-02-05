@@ -94,3 +94,53 @@ Next.js 앱은 **Vercel**에, 실시간 게임 서버(PartyKit)는 **PartyKit Cl
 - **배포 후 코드 수정 시**
   - Vercel: GitHub에 푸시하면 자동 재배포 (또는 대시보드에서 Redeploy)
   - PartyKit: 코드 변경 후 다시 `npx partykit deploy` 실행
+
+---
+
+## PartyKit 대시보드 500 오류 시: Cloudflare 직접 배포 (우회)
+
+`npx partykit deploy` 실행 시 브라우저에서 **dashboard.partykit.io** 로그인 페이지가 열리고  
+**500 MIDDLEWARE_INVOCATION_FAILED** 오류가 나는 경우, PartyKit 로그인 없이 **본인 Cloudflare 계정**에 직접 배포할 수 있습니다.
+
+### 사전 준비
+
+- [Cloudflare](https://dash.cloudflare.com) 계정
+- Cloudflare에 연결된 **도메인** 1개 (예: `example.com` → 서브도메인 `ax-game.example.com` 사용)  
+  - 도메인이 없다면: [Freenom](https://www.freenom.com)(무료 도메인) 또는 [Cloudflare Registrar](https://www.cloudflare.com/products/registrar/) 등으로 도메인을 준비한 뒤 Cloudflare에 추가하면 됩니다.
+
+### 1. Cloudflare 정보 확인
+
+1. **Account ID**  
+   - [Cloudflare 대시보드](https://dash.cloudflare.com) → 아무 도메인 선택 → 오른쪽 **API** 섹션의 **Account ID** 복사
+
+2. **API Token**  
+   - [API Tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token**  
+   - **Edit Cloudflare Workers** 템플릿 사용 또는 권한에 Workers 편집 포함  
+   - 생성된 토큰 복사 (한 번만 표시됨)
+
+### 2. 도메인 준비
+
+- Cloudflare에 추가한 도메인에서 **서브도메인** 하나 사용 (예: `ax-game.example.com`)
+- 해당 도메인/서브도메인의 DNS는 Cloudflare에서 관리 중이어야 함
+
+### 3. PartyKit을 Cloudflare에 배포
+
+터미널에서 (PowerShell):
+
+```powershell
+cd c:\Users\tmlee\Desktop\Shinhan_AX
+
+$env:CLOUDFLARE_ACCOUNT_ID="여기에_Account_ID"
+$env:CLOUDFLARE_API_TOKEN="여기에_API_Token"
+npx partykit deploy --domain ax-game.example.com
+```
+
+- `ax-game.example.com`을 본인 도메인/서브도메인으로 바꾸세요.
+- 브라우저 로그인 없이 배포가 진행됩니다.
+
+### 4. 배포 후
+
+- 터미널에 표시되는 배포된 **호스트**(예: `ax-game.example.com`)를 복사합니다.
+- **2단계: Next.js 앱 배포 (Vercel)** 로 가서, 환경 변수 `NEXT_PUBLIC_PARTYKIT_HOST` 값에 이 호스트를 넣습니다 (프로토콜 없이 호스트만).
+
+참고: [PartyKit - Deploy to your own Cloudflare account](https://docs.partykit.io/guides/deploy-to-cloudflare/)

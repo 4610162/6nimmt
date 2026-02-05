@@ -145,13 +145,33 @@ export default class GameServer implements Party.Server {
     const state = (await this.room.storage.get<GameState>("gameState")) ?? createInitialState();
     const playerId = connection.id;
     const player = state.players.find((p) => p.id === playerId);
-    if (player) {
-      player.connected = false;
-      await this.room.storage.put("gameState", state);
-      this.room.broadcast(
-        JSON.stringify({ type: "playerLeft", playerId }),
-        [connection.id]
-      );
+    if (!player) return;
+
+    player.connected = false;
+    await this.room.storage.put("gameState", state);
+    this.room.broadcast(
+      JSON.stringify({ type: "state", state: getBroadcastState(state) })
+    );
+
+    if (state.phase === "selecting" && !state.turnInfo.playedCards[playerId] && player.hand.length > 0) {
+      const lowestCard = player.hand.reduce((min, c) => (c.id < min.id ? c : min));
+      state.turnInfo.playedCards[playerId] = lowestCard;
+      const committedCount = Object.keys(state.turnInfo.playedCards).length;
+      const totalPlayers = state.players.length;
+      if (committedCount < totalPlayers) {
+        state.turnInfo.committedCount = committedCount;
+        await this.room.storage.put("gameState", state);
+        this.room.broadcast(
+          JSON.stringify({ type: "state", state: getBroadcastState(state) })
+        );
+        return;
+      }
+      await this.revealAndResolve(state);
+      return;
+    }
+
+    if (state.phase === "resolving" && state.turnInfo.waitingForRowChoice === playerId) {
+      await this.resolveWithRowChoice(state, 0);
     }
   }
 

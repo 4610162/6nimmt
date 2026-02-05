@@ -1,5 +1,6 @@
 "use client";
 
+import { motion } from "framer-motion";
 import type { Card as CardType } from "@/types/game";
 
 /** 벌점 개수별 카드 배경색 (1: 초록, 2: 노랑, 3: 주황, 5+: 빨강) */
@@ -40,6 +41,10 @@ interface CardProps {
   onClick?: () => void;
   disabled?: boolean;
   selected?: boolean;
+  /** 뒷면(숫자 비공개) 표시 — 공개 연출용 */
+  faceDown?: boolean;
+  /** 선택된 카드 하이라이트(가시성) */
+  highlight?: boolean;
 }
 
 export function Card({
@@ -48,6 +53,8 @@ export function Card({
   onClick,
   disabled = false,
   selected = false,
+  faceDown = false,
+  highlight = false,
 }: CardProps) {
   const sizeClass =
     size === "sm"
@@ -63,27 +70,64 @@ export function Card({
   const isLightBg = card.bullHeads >= 2 && card.bullHeads <= 4;
   const numberColor = isLightBg ? "text-slate-900" : "text-white";
 
+  const showHighlight = selected || highlight;
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={`
-        ${bgClass} ${sizeClass}
-        rounded-lg border-2 shadow-md
-        flex flex-col items-center justify-center gap-0.5 overflow-hidden
-        transition-all duration-150
-        ${onClick && !disabled ? "cursor-pointer hover:scale-105 hover:shadow-lg" : ""}
-        ${disabled ? "opacity-60 cursor-not-allowed" : ""}
-        ${selected ? "ring-4 ring-white scale-105 shadow-xl" : ""}
-      `}
+    <motion.div
+      className="relative"
+      style={{ perspective: "1000px", transformStyle: "preserve-3d" }}
+      animate={{ rotateY: faceDown ? 180 : 0 }}
+      transition={{ duration: 0.5, ease: [0.23, 1, 0.32, 1] }}
     >
-      <span className={`font-bold ${numberColor} drop-shadow-sm`}>
-        {card.id}
-      </span>
-      <span className={`${penaltySize} ${numberColor} flex items-center justify-center min-w-0`}>
-        <PenaltyBombs count={card.bullHeads} />
-      </span>
-    </button>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        className={`
+          relative ${sizeClass}
+          rounded-lg border-2 shadow-md
+          flex flex-col items-center justify-center gap-0.5 overflow-hidden
+          transition-all duration-150
+          ${onClick && !disabled ? "cursor-pointer hover:scale-105 hover:shadow-lg" : ""}
+          ${disabled ? "opacity-60 cursor-not-allowed" : ""}
+          ${showHighlight ? "ring-4 ring-amber-400 ring-offset-2 ring-offset-slate-900 scale-105 shadow-xl shadow-amber-500/20" : ""}
+        `}
+      >
+        {/* 하이라이트: 선택/강조 시 카드 주변 글로우 */}
+        {showHighlight && (
+          <span
+            className="absolute inset-0 rounded-lg pointer-events-none z-10"
+            style={{
+              boxShadow: "inset 0 0 0 2px rgba(251, 191, 36, 0.6), 0 0 20px rgba(251, 191, 36, 0.25)",
+            }}
+            aria-hidden
+          />
+        )}
+
+        {/* 뒷면 (rotateY 180일 때 보이도록) */}
+        <span
+          className="absolute inset-0 rounded-lg bg-slate-600 border-2 border-slate-500 flex items-center justify-center"
+          style={{
+            backfaceVisibility: "hidden",
+            transform: "rotateY(180deg)",
+          }}
+        >
+          <span className="text-slate-400 text-lg font-bold">?</span>
+        </span>
+
+        {/* 앞면 (숫자·벌점) */}
+        <span
+          className={`absolute inset-0 rounded-lg ${bgClass} border-2 flex flex-col items-center justify-center gap-0.5`}
+          style={{ backfaceVisibility: "hidden" }}
+        >
+          <span className={`font-bold ${numberColor} drop-shadow-sm`}>
+            {card.id}
+          </span>
+          <span className={`${penaltySize} ${numberColor} flex items-center justify-center min-w-0`}>
+            <PenaltyBombs count={card.bullHeads} />
+          </span>
+        </span>
+      </button>
+    </motion.div>
   );
 }

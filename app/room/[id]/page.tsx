@@ -82,6 +82,14 @@ export default function RoomPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!roomId) return;
+    fetch(`/api/rooms/${encodeURIComponent(roomId)}/join`, { method: "POST" }).catch(() => {});
+    return () => {
+      fetch(`/api/rooms/${encodeURIComponent(roomId)}/leave`, { method: "POST" }).catch(() => {});
+    };
+  }, [roomId]);
+
   const handleJoin = useCallback(() => {
     if (!playerName.trim()) return;
     setErrorMessage(null);
@@ -187,6 +195,7 @@ export default function RoomPage() {
                   className={`w-2 h-2 rounded-full ${p.connected ? "bg-emerald-500" : "bg-slate-500"}`}
                 />
                 {p.name}
+                {p.connected === false && <span className="text-xs text-slate-500">(이탈)</span>}
                 {p.id === connectionId && (
                   <span className="text-xs text-emerald-400">(나)</span>
                 )}
