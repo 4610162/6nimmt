@@ -215,7 +215,8 @@ export default class GameServer implements Party.Server {
     const baseState = getBroadcastState(state);
     this.room.broadcast(JSON.stringify({ type: "state", state: baseState }));
     if (state.phase !== "selecting") return;
-    for (const conn of this.room.getConnections()) {
+    const connections = Array.from(this.room.getConnections());
+    for (const conn of connections) {
       const pid = conn.id;
       if (pid && state.turnInfo.playedCards[pid]) {
         conn.send(
