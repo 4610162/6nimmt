@@ -337,6 +337,13 @@ export default function RoomPage() {
               방장이 모든 플레이어 준비 시 게임을 시작합니다.
             </p>
           )}
+          <button
+            type="button"
+            onClick={handleLeaveRoom}
+            className="w-full py-2 rounded-lg bg-slate-600 hover:bg-slate-500 text-slate-200 text-sm font-medium transition"
+          >
+            방 나가기
+          </button>
         </div>
       </main>
     );
