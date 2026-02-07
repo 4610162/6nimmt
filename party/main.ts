@@ -319,7 +319,12 @@ export default class GameServer implements Party.Server {
       );
       return;
     }
-    const humanCount = state.players.filter((p) => !p.isBot).length;
+    if (state.hostId !== sender.id) {
+      sender.send(
+        JSON.stringify({ type: "error", message: "방장만 봇을 추가할 수 있습니다." })
+      );
+      return;
+    }
     const botCount = state.players.filter((p) => p.isBot).length;
     if (botCount >= MAX_BOTS) {
       sender.send(

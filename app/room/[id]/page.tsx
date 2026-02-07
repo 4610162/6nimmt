@@ -22,7 +22,6 @@ export default function RoomPage() {
   const [playerName, setPlayerName] = useState("");
   const [hasJoined, setHasJoined] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [copySuccess, setCopySuccess] = useState(false);
   const [turnPenalty, setTurnPenalty] = useState<number | null>(null);
   const [roundEndState, setRoundEndState] = useState<GameState | null>(null);
 
@@ -123,6 +122,7 @@ export default function RoomPage() {
   }, [socket]);
 
   const handleAddBot = useCallback(() => {
+    if (socket.readyState !== 1) return;
     socket.send(JSON.stringify({ type: "addBot" }));
   }, [socket]);
 
@@ -143,14 +143,6 @@ export default function RoomPage() {
     },
     [socket]
   );
-
-  const handleCopyInviteLink = useCallback(() => {
-    const url = typeof window !== "undefined" ? window.location.href : "";
-    navigator.clipboard.writeText(url).then(() => {
-      setCopySuccess(true);
-      setTimeout(() => setCopySuccess(false), 2000);
-    });
-  }, []);
 
   if (!gameState) {
     return (
@@ -210,7 +202,10 @@ export default function RoomPage() {
       gameState.players.length >= 2 &&
       allNonHostReady;
     const canAddBot =
-      botCount < 9 && gameState.players.length < 10;
+      isHost &&
+      botCount < 9 &&
+      gameState.players.length < 10 &&
+      socket.readyState === 1;
 
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-8">
@@ -218,13 +213,6 @@ export default function RoomPage() {
           <h1 className="text-xl font-bold text-white text-center">
             대기실
           </h1>
-          <button
-            type="button"
-            onClick={handleCopyInviteLink}
-            className="w-full py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition"
-          >
-            {copySuccess ? "복사됨!" : "초대 링크 복사"}
-          </button>
           <p className="text-slate-400 text-center text-sm">
             플레이어 {gameState.players.length}명 · 최소 2명 필요 (최대 10명, 봇 최대 9명)
           </p>
@@ -303,20 +291,11 @@ export default function RoomPage() {
   const headerContent = (
     <header className="flex items-center justify-between p-4 border-b border-slate-700 bg-slate-900/50">
       <h1 className="text-lg font-bold text-white">6 nimmt!</h1>
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={handleCopyInviteLink}
-          className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition"
-        >
-          {copySuccess ? "복사됨!" : "초대 링크 복사"}
-        </button>
-        <div className="flex items-center gap-4 text-sm text-slate-400">
-          <span
-            className={`w-2 h-2 rounded-full animate-pulse ${socket.readyState === 1 ? "bg-emerald-500" : "bg-amber-500"}`}
-          />
-          {socket.readyState === 1 ? "연결됨" : "연결 중..."}
-        </div>
+      <div className="flex items-center gap-4 text-sm text-slate-400">
+        <span
+          className={`w-2 h-2 rounded-full animate-pulse ${socket.readyState === 1 ? "bg-emerald-500" : "bg-amber-500"}`}
+        />
+        {socket.readyState === 1 ? "연결됨" : "연결 중..."}
       </div>
     </header>
   );
