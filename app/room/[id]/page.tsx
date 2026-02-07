@@ -69,7 +69,7 @@ export default function RoomPage() {
           const id = typeof msg.yourConnectionId === "string" ? msg.yourConnectionId : "";
           connectionIdRef.current = id || null;
           setConnectionIdFromServer(id || null);
-          applyGameStateUpdate(state, id || connectionIdRef.current ?? null);
+          applyGameStateUpdate(state, id || (connectionIdRef.current ?? null));
           return;
         }
 
