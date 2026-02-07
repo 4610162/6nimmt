@@ -253,9 +253,10 @@ export default function RoomPage() {
     const allNonHostReady = humanPlayers.every(
       (p) => p.id === gameState.hostId || p.isReady === true
     );
+    const totalParticipants = gameState.players.length;
     const canStart =
       isHost &&
-      gameState.players.length >= 2 &&
+      totalParticipants >= 2 &&
       allNonHostReady;
     const canAddBot =
       connectionId !== null &&
@@ -270,7 +271,7 @@ export default function RoomPage() {
             대기실
           </h1>
           <p className="text-slate-400 text-center text-sm">
-            플레이어 {gameState.players.length}명 · 최소 2명 필요 (최대 10명, 봇 최대 9명)
+            플레이어+봇 {gameState.players.length}명 · 1명+봇 1명 이상이면 시작 가능 (최대 10명, 봇 최대 9명)
           </p>
           <div className="flex gap-2">
             <button

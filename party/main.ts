@@ -12,6 +12,7 @@ import {
   resolveTurn,
 } from "../lib/game";
 
+/** 게임 시작 최소 인원 (실제 플레이어 + 봇 합산, 예: 실제 1명 + 봇 1명 = 2명으로 시작 가능) */
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 10;
 const MAX_BOTS = 9;
@@ -426,7 +427,7 @@ export default class GameServer implements Party.Server {
       sender.send(
         JSON.stringify({
           type: "error",
-          message: `최소 ${MIN_PLAYERS}명이 필요합니다.`,
+          message: `최소 ${MIN_PLAYERS}명(플레이어+봇)이 필요합니다.`,
         })
       );
       return;
