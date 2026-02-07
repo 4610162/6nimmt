@@ -25,6 +25,7 @@ export default function RoomPage() {
   const [turnPenalty, setTurnPenalty] = useState<number | null>(null);
   const [roundEndState, setRoundEndState] = useState<GameState | null>(null);
   const [connectionIdFromServer, setConnectionIdFromServer] = useState<string | null>(null);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
   const prevScoreRef = useRef<number | null>(null);
   const roundEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -177,10 +178,52 @@ export default function RoomPage() {
   }, [router]);
 
   const handleLeaveRoom = useCallback(() => {
-    if (window.confirm("방을 나가시겠습니까? 이탈한 것으로 처리됩니다.")) {
-      router.push("/");
-    }
+    setShowLeaveConfirm(true);
+  }, []);
+
+  const handleLeaveConfirm = useCallback(() => {
+    setShowLeaveConfirm(false);
+    router.push("/");
   }, [router]);
+
+  const handleLeaveCancel = useCallback(() => {
+    setShowLeaveConfirm(false);
+  }, []);
+
+  const leaveConfirmModal = showLeaveConfirm && (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+      onClick={handleLeaveCancel}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="leave-confirm-message"
+    >
+      <div
+        className="w-full max-w-sm rounded-xl bg-slate-800 border border-slate-600 p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p id="leave-confirm-message" className="text-white text-center mb-6">
+          방을 나가시겠습니까? 이탈한 것으로 처리됩니다.
+        </p>
+        <div className="flex gap-3 justify-end">
+          <button
+            type="button"
+            onClick={handleLeaveCancel}
+            className="px-4 py-2 rounded-lg border border-slate-500 text-slate-300 hover:bg-slate-700 transition"
+          >
+            취소
+          </button>
+          <button
+            type="button"
+            onClick={handleLeaveConfirm}
+            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition"
+          >
+            확인
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   const handlePlayCard = useCallback(
     (cardId: number) => {
@@ -262,11 +305,12 @@ export default function RoomPage() {
       socket.readyState === 1;
 
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center p-8">
-        <div className="w-full max-w-md space-y-6 rounded-xl bg-slate-800/50 p-6 border border-slate-600">
-          <h1 className="text-xl font-bold text-white text-center">
-            대기실
-          </h1>
+      <>
+        <main className="flex min-h-screen flex-col items-center justify-center p-8">
+          <div className="w-full max-w-md space-y-6 rounded-xl bg-slate-800/50 p-6 border border-slate-600">
+            <h1 className="text-xl font-bold text-white text-center">
+              대기실
+            </h1>
           <p className="text-slate-400 text-center text-sm">
             플레이어 {gameState.players.length}명 · 최소 2명 필요 (최대 10명, 봇 최대 9명)
           </p>
@@ -346,6 +390,8 @@ export default function RoomPage() {
           </button>
         </div>
       </main>
+        {leaveConfirmModal}
+      </>
     );
   }
 
@@ -372,60 +418,66 @@ export default function RoomPage() {
 
   if (gameState.phase === "gameEnd") {
     return (
-      <main className="flex min-h-screen flex-col">
-        {headerContent}
-        <div className="flex-1 flex items-center justify-center opacity-30">
-          <GameBoard
+      <>
+        <main className="flex min-h-screen flex-col">
+          {headerContent}
+          <div className="flex-1 flex items-center justify-center opacity-30">
+            <GameBoard
+              state={gameState}
+              myPlayerId={connectionId}
+              onPlayCard={() => {}}
+            />
+          </div>
+          <ResultModal
             state={gameState}
             myPlayerId={connectionId}
-            onPlayCard={() => {}}
+            onClose={handleLeaveAfterGame}
           />
-        </div>
-        <ResultModal
-          state={gameState}
-          myPlayerId={connectionId}
-          onClose={handleLeaveAfterGame}
-        />
-      </main>
+        </main>
+        {leaveConfirmModal}
+      </>
     );
   }
 
   return (
-    <main className="flex min-h-screen flex-col">
-      {headerContent}
-      <GameBoard
-        state={gameState}
-        myPlayerId={connectionId}
-        onPlayCard={handlePlayCard}
-        onChooseRow={handleChooseRow}
-      />
-
-      <AnimatePresence>
-        {turnPenalty != null && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-30 px-6 py-3 rounded-xl bg-amber-500/95 text-slate-900 font-bold shadow-lg"
-          >
-            이번 턴 벌점: +{turnPenalty}점
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {roundEndState && (
-        <RoundEndModal
-          state={roundEndState}
+    <>
+      <main className="flex min-h-screen flex-col">
+        {headerContent}
+        <GameBoard
+          state={gameState}
           myPlayerId={connectionId}
-          onDismiss={() => {
-            setRoundEndState(null);
-            if (roundEndTimerRef.current) {
-              clearTimeout(roundEndTimerRef.current);
-              roundEndTimerRef.current = null;
-            }
-          }}
+          onPlayCard={handlePlayCard}
+          onChooseRow={handleChooseRow}
         />
-      )}
-    </main>
+
+        <AnimatePresence>
+          {turnPenalty != null && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="fixed bottom-24 left-1/2 -translate-x-1/2 z-30 px-6 py-3 rounded-xl bg-amber-500/95 text-slate-900 font-bold shadow-lg"
+            >
+              이번 턴 벌점: +{turnPenalty}점
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {roundEndState && (
+          <RoundEndModal
+            state={roundEndState}
+            myPlayerId={connectionId}
+            onDismiss={() => {
+              setRoundEndState(null);
+              if (roundEndTimerRef.current) {
+                clearTimeout(roundEndTimerRef.current);
+                roundEndTimerRef.current = null;
+              }
+            }}
+          />
+        )}
+      </main>
+      {leaveConfirmModal}
+    </>
   );
 }
