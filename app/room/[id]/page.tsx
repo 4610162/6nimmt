@@ -29,6 +29,7 @@ export default function RoomPage() {
   const prevScoreRef = useRef<number | null>(null);
   const roundEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionIdRef = useRef<string | null>(null);
+  const socketRef = useRef<ReturnType<typeof usePartySocket> | null>(null);
 
   const socket = usePartySocket({
     host: PARTYKIT_HOST,
@@ -117,6 +118,7 @@ export default function RoomPage() {
   });
 
   const connectionId = connectionIdFromServer ?? socket.id ?? null;
+  socketRef.current = socket;
 
   useEffect(() => {
     return () => {
@@ -180,9 +182,15 @@ export default function RoomPage() {
   }, [socket]);
 
   const handleAddBot = useCallback(() => {
-    if (socket.readyState !== 1) return;
-    socket.send(JSON.stringify({ type: "addBot" }));
-  }, [socket]);
+    const ws = socketRef.current;
+    if (!ws || ws.readyState !== 1) return;
+    try {
+      ws.send(JSON.stringify({ type: "addBot" }));
+    } catch (e) {
+      console.error("addBot send failed", e);
+      setErrorMessage("봇 추가 전송 실패");
+    }
+  }, []);
 
   const handleLeaveAfterGame = useCallback(() => {
     router.push("/");
