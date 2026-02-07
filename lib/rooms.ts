@@ -164,6 +164,10 @@ export async function leaveRoom(roomId: string, sessionId: string): Promise<void
   const members = memoryStore.members.get(roomId);
   if (members) {
     members.delete(sessionId);
-    if (members.size === 0) memoryStore.members.delete(roomId);
+    if (members.size === 0) {
+      memoryStore.members.delete(roomId);
+      memoryStore.meta.delete(roomId);
+      memoryStore.roomIds.delete(roomId);
+    }
   }
 }

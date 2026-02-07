@@ -81,10 +81,10 @@ export type ClientMessage =
 /** 서버 -> 클라이언트 메시지 타입 */
 export type ServerMessage =
   | { type: "state"; state: GameState }
-  | { type: "playerJoined"; player: Player }
-  | { type: "playerLeft"; playerId: string }
-  | { type: "error"; message: string }
-  | { type: "phaseChanged"; phase: GamePhase };
+  | { type: "stateWithConnectionId"; state: GameState; yourConnectionId: string }
+  | { type: "botAdded"; state: GameState }
+  | { type: "yourConnectionId"; id: string }
+  | { type: "error"; message: string };
 
 /** 황소 머리 수 계산 (6 nimmt! 규칙) */
 export function getBullHeads(cardId: number): number {

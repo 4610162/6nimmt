@@ -212,6 +212,21 @@ export default class GameServer implements Party.Server {
       await this.callLeaveRoom(this.room.id, sessionId);
     }
 
+    const realPlayersLeft = state.players.filter((p) => !p.isBot).length;
+    if (realPlayersLeft === 0) {
+      const winner = state.players.reduce((a, b) =>
+        a.score < b.score ? a : b
+      );
+      state.phase = "gameEnd";
+      state.turnInfo.phase = "gameEnd";
+      state.winner = winner.id;
+      await this.room.storage.put("gameState", state);
+      this.room.broadcast(
+        JSON.stringify({ type: "state", state: getBroadcastState(state) })
+      );
+      return;
+    }
+
     await this.room.storage.put("gameState", state);
     this.room.broadcast(
       JSON.stringify({ type: "state", state: getBroadcastState(state) })
@@ -404,9 +419,7 @@ export default class GameServer implements Party.Server {
       sender.send(JSON.stringify({ type: "error", message: "상태 생성 실패" }));
       return;
     }
-    const stateMsg = JSON.stringify({ type: "state", state: broadcastState });
     sender.send(JSON.stringify({ type: "botAdded", state: broadcastState }));
-    this.room.broadcast(stateMsg);
     this.broadcastStateWaiting(newState, sender);
   }
 

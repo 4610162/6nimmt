@@ -31,6 +31,31 @@ export default function RoomPage() {
   const connectionIdRef = useRef<string | null>(null);
   const socketRef = useRef<ReturnType<typeof usePartySocket> | null>(null);
 
+  const applyGameStateUpdate = useCallback((state: GameState, myId: string | null) => {
+    if (state.phase === "roundEnd") {
+      setRoundEndState(state);
+      if (roundEndTimerRef.current) clearTimeout(roundEndTimerRef.current);
+      roundEndTimerRef.current = setTimeout(() => {
+        setRoundEndState(null);
+        roundEndTimerRef.current = null;
+      }, 5000);
+    }
+    if (state.placementOrder && myId) {
+      const me = state.players.find((p) => p.id === myId);
+      const prev = prevScoreRef.current ?? 0;
+      if (me != null && me.score > prev) {
+        setTurnPenalty(me.score - prev);
+        setTimeout(() => setTurnPenalty(null), 2500);
+      }
+      prevScoreRef.current = me?.score ?? null;
+    } else if (myId) {
+      const me = state.players.find((p) => p.id === myId);
+      prevScoreRef.current = me?.score ?? null;
+    }
+    setGameState(state);
+    setErrorMessage(null);
+  }, []);
+
   const socket = usePartySocket({
     host: PARTYKIT_HOST,
     room: roomId,
@@ -44,60 +69,15 @@ export default function RoomPage() {
           const id = typeof msg.yourConnectionId === "string" ? msg.yourConnectionId : "";
           connectionIdRef.current = id || null;
           setConnectionIdFromServer(id || null);
-          if (state.phase === "roundEnd") {
-            setRoundEndState(state);
-            if (roundEndTimerRef.current) clearTimeout(roundEndTimerRef.current);
-            roundEndTimerRef.current = setTimeout(() => {
-              setRoundEndState(null);
-              roundEndTimerRef.current = null;
-            }, 5000);
-          }
-          const myId = id || (connectionIdRef.current ?? null);
-          if (state.placementOrder && myId) {
-            const me = state.players.find((p) => p.id === myId);
-            const prev = prevScoreRef.current ?? 0;
-            if (me != null && me.score > prev) {
-              setTurnPenalty(me.score - prev);
-              setTimeout(() => setTurnPenalty(null), 2500);
-            }
-            prevScoreRef.current = me?.score ?? null;
-          } else if (myId) {
-            const me = state.players.find((p) => p.id === myId);
-            prevScoreRef.current = me?.score ?? null;
-          }
-          setGameState(state);
-          setErrorMessage(null);
+          applyGameStateUpdate(state, id || connectionIdRef.current ?? null);
           return;
         }
 
         if (msg.type === "state" && msg.state) {
-          const state = msg.state as GameState;
-
-          if (state.phase === "roundEnd") {
-            setRoundEndState(state);
-            if (roundEndTimerRef.current) clearTimeout(roundEndTimerRef.current);
-            roundEndTimerRef.current = setTimeout(() => {
-              setRoundEndState(null);
-              roundEndTimerRef.current = null;
-            }, 5000);
-          }
-
-          const myId = connectionIdRef.current ?? socket.id ?? null;
-          if (state.placementOrder && myId) {
-            const me = state.players.find((p) => p.id === myId);
-            const prev = prevScoreRef.current ?? 0;
-            if (me != null && me.score > prev) {
-              setTurnPenalty(me.score - prev);
-              setTimeout(() => setTurnPenalty(null), 2500);
-            }
-            prevScoreRef.current = me?.score ?? null;
-          } else if (myId) {
-            const me = state.players.find((p) => p.id === myId);
-            prevScoreRef.current = me?.score ?? null;
-          }
-
-          setGameState(state);
-          setErrorMessage(null);
+          applyGameStateUpdate(
+            msg.state as GameState,
+            connectionIdRef.current ?? socket.id ?? null
+          );
         }
         if (msg.type === "botAdded" && msg.state != null) {
           setGameState(msg.state as GameState);
@@ -194,6 +174,12 @@ export default function RoomPage() {
 
   const handleLeaveAfterGame = useCallback(() => {
     router.push("/");
+  }, [router]);
+
+  const handleLeaveRoom = useCallback(() => {
+    if (window.confirm("방을 나가시겠습니까? 이탈한 것으로 처리됩니다.")) {
+      router.push("/");
+    }
   }, [router]);
 
   const handlePlayCard = useCallback(
@@ -359,11 +345,22 @@ export default function RoomPage() {
   const headerContent = (
     <header className="flex items-center justify-between p-4 border-b border-slate-700 bg-slate-900/50">
       <h1 className="text-lg font-bold text-white">6 nimmt!</h1>
-      <div className="flex items-center gap-4 text-sm text-slate-400">
-        <span
-          className={`w-2 h-2 rounded-full animate-pulse ${socket.readyState === 1 ? "bg-emerald-500" : "bg-amber-500"}`}
-        />
-        {socket.readyState === 1 ? "연결됨" : "연결 중..."}
+      <div className="flex items-center gap-3">
+        {gameState.phase !== "waiting" && (
+          <button
+            type="button"
+            onClick={handleLeaveRoom}
+            className="px-3 py-1.5 rounded-lg bg-slate-600 hover:bg-slate-500 text-slate-200 text-sm font-medium transition"
+          >
+            방 나가기
+          </button>
+        )}
+        <div className="flex items-center gap-4 text-sm text-slate-400">
+          <span
+            className={`w-2 h-2 rounded-full animate-pulse ${socket.readyState === 1 ? "bg-emerald-500" : "bg-amber-500"}`}
+          />
+          {socket.readyState === 1 ? "연결됨" : "연결 중..."}
+        </div>
       </div>
     </header>
   );
