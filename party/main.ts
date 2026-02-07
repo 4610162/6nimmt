@@ -237,19 +237,18 @@ export default class GameServer implements Party.Server {
     }
   }
 
-  /** waiting 단계: state 브로드캐스트 후 각 연결에 yourConnectionId 전송 (클라이언트가 방장 여부 등 판단 가능) */
+  /** waiting 단계: 각 연결마다 state + yourConnectionId를 한 메시지로 전송 (클라이언트가 항상 올바른 connectionId 수신) */
   private broadcastStateWaiting(state: GameState): void {
-    this.room.broadcast(
-      JSON.stringify({ type: "state", state: getBroadcastState(state) })
-    );
-    if (state.phase !== "waiting") return;
+    const broadcastState = getBroadcastState(state);
     const connections = Array.from(this.room.getConnections());
     for (const conn of connections) {
-      if (conn.id) {
-        conn.send(
-          JSON.stringify({ type: "yourConnectionId", id: conn.id })
-        );
-      }
+      conn.send(
+        JSON.stringify({
+          type: "stateWithConnectionId",
+          state: broadcastState,
+          yourConnectionId: conn.id ?? "",
+        })
+      );
     }
   }
 
@@ -352,12 +351,6 @@ export default class GameServer implements Party.Server {
     if (state.phase !== "waiting") {
       sender.send(
         JSON.stringify({ type: "error", message: "게임이 이미 시작되었습니다." })
-      );
-      return;
-    }
-    if (state.hostId !== sender.id) {
-      sender.send(
-        JSON.stringify({ type: "error", message: "방장만 봇을 추가할 수 있습니다." })
       );
       return;
     }

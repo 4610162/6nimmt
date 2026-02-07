@@ -37,6 +37,38 @@ export default function RoomPage() {
     onMessage(event) {
       try {
         const msg = JSON.parse(event.data as string);
+
+        if (msg.type === "stateWithConnectionId" && msg.state != null) {
+          const state = msg.state as GameState;
+          const id = typeof msg.yourConnectionId === "string" ? msg.yourConnectionId : "";
+          connectionIdRef.current = id || null;
+          setConnectionIdFromServer(id || null);
+          if (state.phase === "roundEnd") {
+            setRoundEndState(state);
+            if (roundEndTimerRef.current) clearTimeout(roundEndTimerRef.current);
+            roundEndTimerRef.current = setTimeout(() => {
+              setRoundEndState(null);
+              roundEndTimerRef.current = null;
+            }, 5000);
+          }
+          const myId = id || connectionIdRef.current ?? null;
+          if (state.placementOrder && myId) {
+            const me = state.players.find((p) => p.id === myId);
+            const prev = prevScoreRef.current ?? 0;
+            if (me != null && me.score > prev) {
+              setTurnPenalty(me.score - prev);
+              setTimeout(() => setTurnPenalty(null), 2500);
+            }
+            prevScoreRef.current = me?.score ?? null;
+          } else if (myId) {
+            const me = state.players.find((p) => p.id === myId);
+            prevScoreRef.current = me?.score ?? null;
+          }
+          setGameState(state);
+          setErrorMessage(null);
+          return;
+        }
+
         if (msg.type === "state" && msg.state) {
           const state = msg.state as GameState;
 
@@ -213,8 +245,10 @@ export default function RoomPage() {
   }
 
   if (gameState.phase === "waiting") {
-    const isHost = gameState.hostId === connectionId;
     const humanPlayers = gameState.players.filter((p) => !p.isBot);
+    const isHost =
+      gameState.hostId === connectionId ||
+      (humanPlayers.length === 1 && connectionId !== null && humanPlayers.some((p) => p.id === connectionId));
     const botCount = gameState.players.filter((p) => p.isBot).length;
     const allNonHostReady = humanPlayers.every(
       (p) => p.id === gameState.hostId || p.isReady === true
@@ -224,7 +258,7 @@ export default function RoomPage() {
       gameState.players.length >= 2 &&
       allNonHostReady;
     const canAddBot =
-      isHost &&
+      connectionId !== null &&
       botCount < 9 &&
       gameState.players.length < 10 &&
       socket.readyState === 1;
