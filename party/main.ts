@@ -566,10 +566,52 @@ export default class GameServer implements Party.Server {
       this.room.broadcast(
         JSON.stringify({ type: "state", state: getBroadcastState(state) })
       );
+      const player = state.players.find((p) => p.id === lowestPlayerId);
+      if (player?.isBot) {
+        this.scheduleBotRowChoice(lowestPlayerId);
+      }
       return;
     }
 
     await this.doResolveTurn(state);
+  }
+
+  /** resolving 단계에서 행 선택 대기 중인 봇이 0.5~1.5초 후 행 선택 (벌점 최소화) */
+  private scheduleBotRowChoice(botPlayerId: string): void {
+    const room = this.room;
+    const delay = BOT_DELAY_MIN_MS + Math.random() * (BOT_DELAY_MAX_MS - BOT_DELAY_MIN_MS);
+    setTimeout(async () => {
+      const state = (await room.storage.get<GameState>("gameState")) ?? createInitialState();
+      if (state.phase !== "resolving" || state.turnInfo.waitingForRowChoice !== botPlayerId) {
+        return;
+      }
+      const player = state.players.find((p) => p.id === botPlayerId);
+      if (!player?.isBot) return;
+
+      const tableRows = state.tableRows;
+      let bestRow = 0;
+      let bestPenalty = getTotalBullHeads(tableRows[0] ?? []);
+      for (let i = 1; i < tableRows.length; i++) {
+        const penalty = getTotalBullHeads(tableRows[i] ?? []);
+        if (penalty < bestPenalty) {
+          bestPenalty = penalty;
+          bestRow = i;
+        }
+      }
+      await this.runBotChooseRow(bestRow);
+    }, delay);
+  }
+
+  private async runBotChooseRow(rowIndex: number): Promise<void> {
+    const state = (await this.room.storage.get<GameState>("gameState")) ?? createInitialState();
+    if (state.phase !== "resolving") return;
+    const waitingId = state.turnInfo.waitingForRowChoice;
+    if (!waitingId) return;
+    const player = state.players.find((p) => p.id === waitingId);
+    if (!player?.isBot) return;
+    if (rowIndex < 0 || rowIndex > 3) return;
+
+    await this.resolveWithRowChoice(state, rowIndex);
   }
 
   private async resolveWithRowChoice(state: GameState, rowIndex: number) {
