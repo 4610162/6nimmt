@@ -1,6 +1,6 @@
 /**
  * 6 nimmt! (Take 6!) - PartyKit Game Server
- * GameState 중앙 관리, 카드 동시 공개, 결과 브로드캐스트
+ * GameState 중앙 관리, 카드 동시 공개, 봇/준비/이탈→봇 대체
  */
 
 import type * as Party from "partykit/server";
@@ -14,12 +14,18 @@ import {
 
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 10;
+const MAX_BOTS = 9;
 const CARDS_PER_PLAYER = 10;
 const TABLE_ROWS = 4;
 const GAME_OVER_SCORE = 66;
+const BOT_DELAY_MIN_MS = 500;
+const BOT_DELAY_MAX_MS = 1500;
 
 type ClientMessage =
-  | { type: "join"; name: string }
+  | { type: "join"; name: string; sessionId?: string }
+  | { type: "ready" }
+  | { type: "unready" }
+  | { type: "addBot" }
   | { type: "playCard"; cardId: number }
   | { type: "chooseRow"; rowIndex: number }
   | { type: "startGame" };
@@ -35,6 +41,8 @@ function createInitialState(): GameState {
       turnNumber: 0,
       playedCards: {},
     },
+    hostId: undefined,
+    playerSessionIds: {},
   };
 }
 
@@ -96,6 +104,17 @@ function getBroadcastState(state: GameState): GameState {
   return broadcast;
 }
 
+/** 특정 플레이어만 자신이 선택한 카드를 보이도록 한 상태 (선택 변경/취소 UI용) */
+function getBroadcastStateForPlayer(state: GameState, playerId: string): GameState {
+  const personal = getBroadcastState(state);
+  if (state.phase === "selecting" && state.turnInfo.playedCards[playerId]) {
+    personal.turnInfo.playedCards = {
+      [playerId]: state.turnInfo.playedCards[playerId],
+    };
+  }
+  return personal;
+}
+
 export default class GameServer implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
@@ -127,7 +146,16 @@ export default class GameServer implements Party.Server {
 
     switch (msg.type) {
       case "join":
-        await this.handleJoin(state, sender, msg.name);
+        await this.handleJoin(state, sender, msg.name, msg.sessionId);
+        break;
+      case "ready":
+        await this.handleReady(state, sender, true);
+        break;
+      case "unready":
+        await this.handleReady(state, sender, false);
+        break;
+      case "addBot":
+        await this.handleAddBot(state, sender);
         break;
       case "startGame":
         await this.handleStartGame(state, sender);
@@ -147,23 +175,30 @@ export default class GameServer implements Party.Server {
     const player = state.players.find((p) => p.id === playerId);
     if (!player) return;
 
+    // 이탈한 플레이어를 삭제하지 않고 봇으로 전환
+    (player as Player).isBot = true;
     player.connected = false;
+
+    const sessionId = state.playerSessionIds?.[playerId];
+    if (sessionId) {
+      await this.callLeaveRoom(this.room.id, sessionId);
+    }
+
     await this.room.storage.put("gameState", state);
     this.room.broadcast(
       JSON.stringify({ type: "state", state: getBroadcastState(state) })
     );
 
+    // 봇 로직: selecting 시 카드 자동 제출
     if (state.phase === "selecting" && !state.turnInfo.playedCards[playerId] && player.hand.length > 0) {
-      const lowestCard = player.hand.reduce((min, c) => (c.id < min.id ? c : min));
-      state.turnInfo.playedCards[playerId] = lowestCard;
+      const botCard = player.hand[Math.floor(Math.random() * player.hand.length)];
+      state.turnInfo.playedCards[playerId] = botCard;
       const committedCount = Object.keys(state.turnInfo.playedCards).length;
       const totalPlayers = state.players.length;
       if (committedCount < totalPlayers) {
         state.turnInfo.committedCount = committedCount;
         await this.room.storage.put("gameState", state);
-        this.room.broadcast(
-          JSON.stringify({ type: "state", state: getBroadcastState(state) })
-        );
+        this.broadcastStateInSelecting(state);
         return;
       }
       await this.revealAndResolve(state);
@@ -175,10 +210,47 @@ export default class GameServer implements Party.Server {
     }
   }
 
+  /** selecting 단계에서 브로드캐스트 + 각 연결에 본인 선택 카드만 포함한 state 전송 */
+  private broadcastStateInSelecting(state: GameState): void {
+    const baseState = getBroadcastState(state);
+    this.room.broadcast(JSON.stringify({ type: "state", state: baseState }));
+    if (state.phase !== "selecting") return;
+    for (const conn of this.room.getConnections()) {
+      const pid = conn.id;
+      if (pid && state.turnInfo.playedCards[pid]) {
+        conn.send(
+          JSON.stringify({
+            type: "state",
+            state: getBroadcastStateForPlayer(state, pid),
+          })
+        );
+      }
+    }
+  }
+
+  /** Next.js API를 통해 Redis leaveRoom 호출 (onClose 시 세션 제거) */
+  private async callLeaveRoom(roomId: string, sessionId: string): Promise<void> {
+    const base = process.env.PARTYKIT_APP_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const secret = process.env.INTERNAL_LEAVE_SECRET;
+    try {
+      await fetch(`${base}/api/rooms/${encodeURIComponent(roomId)}/leave`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(secret ? { "x-internal-secret": secret } : {}),
+        },
+        body: JSON.stringify({ sessionId }),
+      });
+    } catch (e) {
+      console.error("callLeaveRoom failed", e);
+    }
+  }
+
   private async handleJoin(
     state: GameState,
     sender: Party.Connection,
-    name: string
+    name: string,
+    sessionId?: string
   ) {
     if (state.phase !== "waiting") {
       sender.send(
@@ -186,6 +258,9 @@ export default class GameServer implements Party.Server {
       );
       return;
     }
+
+    if (!state.playerSessionIds) state.playerSessionIds = {};
+    if (sessionId) state.playerSessionIds[sender.id] = sessionId;
 
     const existing = state.players.find((p) => p.id === sender.id);
     if (existing) {
@@ -198,6 +273,7 @@ export default class GameServer implements Party.Server {
         );
         return;
       }
+      const isFirst = state.players.length === 0;
       state.players.push({
         id: sender.id,
         name,
@@ -205,7 +281,10 @@ export default class GameServer implements Party.Server {
         collectedCards: [],
         score: 0,
         connected: true,
+        isBot: false,
+        isReady: isFirst, // 방장은 기본 준비
       });
+      if (isFirst) state.hostId = sender.id;
     }
 
     await this.room.storage.put("gameState", state);
@@ -217,6 +296,59 @@ export default class GameServer implements Party.Server {
     );
   }
 
+  private async handleReady(
+    state: GameState,
+    sender: Party.Connection,
+    ready: boolean
+  ) {
+    if (state.phase !== "waiting") return;
+    const player = state.players.find((p) => p.id === sender.id);
+    if (!player || player.isBot) return;
+    player.isReady = ready;
+    await this.room.storage.put("gameState", state);
+    this.room.broadcast(
+      JSON.stringify({ type: "state", state: getBroadcastState(state) })
+    );
+  }
+
+  private async handleAddBot(state: GameState, sender: Party.Connection) {
+    if (state.phase !== "waiting") {
+      sender.send(
+        JSON.stringify({ type: "error", message: "게임이 이미 시작되었습니다." })
+      );
+      return;
+    }
+    const humanCount = state.players.filter((p) => !p.isBot).length;
+    const botCount = state.players.filter((p) => p.isBot).length;
+    if (botCount >= MAX_BOTS) {
+      sender.send(
+        JSON.stringify({ type: "error", message: `봇은 최대 ${MAX_BOTS}명까지 추가할 수 있습니다.` })
+      );
+      return;
+    }
+    if (state.players.length >= MAX_PLAYERS) {
+      sender.send(
+        JSON.stringify({ type: "error", message: "방이 가득 찼습니다." })
+      );
+      return;
+    }
+    const botId = `bot_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    state.players.push({
+      id: botId,
+      name: `봇 ${botCount + 1}`,
+      hand: [],
+      collectedCards: [],
+      score: 0,
+      connected: true,
+      isBot: true,
+      isReady: true,
+    });
+    await this.room.storage.put("gameState", state);
+    this.room.broadcast(
+      JSON.stringify({ type: "state", state: getBroadcastState(state) })
+    );
+  }
+
   private async handleStartGame(state: GameState, sender: Party.Connection) {
     if (state.phase !== "waiting") {
       sender.send(
@@ -224,9 +356,26 @@ export default class GameServer implements Party.Server {
       );
       return;
     }
-
-    const playerCount = state.players.filter((p) => p.connected).length;
-    if (playerCount < MIN_PLAYERS) {
+    if (state.hostId !== sender.id) {
+      sender.send(
+        JSON.stringify({ type: "error", message: "방장만 게임을 시작할 수 있습니다." })
+      );
+      return;
+    }
+    const humanPlayers = state.players.filter((p) => !p.isBot);
+    const allHumansReady = humanPlayers.every(
+      (p) => p.id === state.hostId || p.isReady === true
+    );
+    if (!allHumansReady) {
+      sender.send(
+        JSON.stringify({
+          type: "error",
+          message: "모든 플레이어가 준비할 때까지 시작할 수 없습니다.",
+        })
+      );
+      return;
+    }
+    if (state.players.length < MIN_PLAYERS) {
       sender.send(
         JSON.stringify({
           type: "error",
@@ -236,12 +385,14 @@ export default class GameServer implements Party.Server {
       return;
     }
 
-    const activePlayers = state.players.filter((p) => p.connected);
-    const newState = initializeGame(activePlayers);
+    const newState = initializeGame(state.players);
+    newState.hostId = state.hostId;
+    newState.playerSessionIds = state.playerSessionIds;
     await this.room.storage.put("gameState", newState);
     this.room.broadcast(
       JSON.stringify({ type: "state", state: getBroadcastState(newState) })
     );
+    this.scheduleBotMoves();
   }
 
   private async handlePlayCard(
@@ -270,15 +421,14 @@ export default class GameServer implements Party.Server {
       return;
     }
 
-    if (state.turnInfo.playedCards[sender.id]) {
-      sender.send(
-        JSON.stringify({ type: "error", message: "이미 카드를 선택했습니다." })
-      );
-      return;
+    const current = state.turnInfo.playedCards[sender.id];
+    if (current?.id === cardId) {
+      // 같은 카드 클릭 → 선택 취소 (변경 허용)
+      delete state.turnInfo.playedCards[sender.id];
+    } else {
+      const card = player.hand[cardIndex];
+      state.turnInfo.playedCards[sender.id] = card;
     }
-
-    const card = player.hand[cardIndex];
-    state.turnInfo.playedCards[sender.id] = card;
 
     const committedCount = Object.keys(state.turnInfo.playedCards).length;
     const totalPlayers = state.players.length;
@@ -286,9 +436,7 @@ export default class GameServer implements Party.Server {
     if (committedCount < totalPlayers) {
       state.turnInfo.committedCount = committedCount;
       await this.room.storage.put("gameState", state);
-      this.room.broadcast(
-        JSON.stringify({ type: "state", state: getBroadcastState(state) })
-      );
+      this.broadcastStateInSelecting(state);
       return;
     }
 
@@ -466,5 +614,44 @@ export default class GameServer implements Party.Server {
     this.room.broadcast(
       JSON.stringify({ type: "state", state: getBroadcastState(state) })
     );
+    this.scheduleBotMoves();
+  }
+
+  /** selecting 단계에서 아직 카드를 내지 않은 봇들에게 0.5~1.5초 지연 후 랜덤 카드 제출 스케줄 */
+  private scheduleBotMoves(): void {
+    const room = this.room;
+    setTimeout(async () => {
+      const state = (await room.storage.get<GameState>("gameState")) ?? createInitialState();
+      if (state.phase !== "selecting") return;
+
+      const botsToMove = state.players.filter(
+        (p) => p.isBot && p.hand.length > 0 && !state.turnInfo.playedCards[p.id]
+      );
+      for (const bot of botsToMove) {
+        const delay = BOT_DELAY_MIN_MS + Math.random() * (BOT_DELAY_MAX_MS - BOT_DELAY_MIN_MS);
+        setTimeout(() => this.runBotPlayCard(bot.id), delay);
+      }
+    }, 100);
+  }
+
+  private async runBotPlayCard(playerId: string): Promise<void> {
+    const state = (await this.room.storage.get<GameState>("gameState")) ?? createInitialState();
+    if (state.phase !== "selecting") return;
+    const player = state.players.find((p) => p.id === playerId);
+    if (!player?.isBot || !player.hand.length || state.turnInfo.playedCards[playerId]) return;
+
+    const card = player.hand[Math.floor(Math.random() * player.hand.length)];
+    state.turnInfo.playedCards[playerId] = card;
+
+    const committedCount = Object.keys(state.turnInfo.playedCards).length;
+    const totalPlayers = state.players.length;
+
+    if (committedCount < totalPlayers) {
+      state.turnInfo.committedCount = committedCount;
+      await this.room.storage.put("gameState", state);
+      this.broadcastStateInSelecting(state);
+      return;
+    }
+    await this.revealAndResolve(state);
   }
 }

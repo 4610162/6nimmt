@@ -90,11 +90,21 @@ export default function RoomPage() {
     };
   }, [roomId]);
 
-  const handleJoin = useCallback(() => {
+  const handleJoin = useCallback(async () => {
     if (!playerName.trim()) return;
     setErrorMessage(null);
+    let sessionId: string | undefined;
+    try {
+      const res = await fetch("/api/session");
+      if (res.ok) {
+        const data = await res.json();
+        sessionId = data.sessionId ?? undefined;
+      }
+    } catch {
+      // ignore
+    }
     socket.send(
-      JSON.stringify({ type: "join", name: playerName.trim() })
+      JSON.stringify({ type: "join", name: playerName.trim(), sessionId })
     );
     setHasJoined(true);
   }, [playerName, socket]);
@@ -102,6 +112,22 @@ export default function RoomPage() {
   const handleStartGame = useCallback(() => {
     socket.send(JSON.stringify({ type: "startGame" }));
   }, [socket]);
+
+  const handleReady = useCallback(() => {
+    socket.send(JSON.stringify({ type: "ready" }));
+  }, [socket]);
+
+  const handleUnready = useCallback(() => {
+    socket.send(JSON.stringify({ type: "unready" }));
+  }, [socket]);
+
+  const handleAddBot = useCallback(() => {
+    socket.send(JSON.stringify({ type: "addBot" }));
+  }, [socket]);
+
+  const handleLeaveAfterGame = useCallback(() => {
+    router.push("/");
+  }, [router]);
 
   const handlePlayCard = useCallback(
     (cardId: number) => {
@@ -172,6 +198,19 @@ export default function RoomPage() {
   }
 
   if (gameState.phase === "waiting") {
+    const isHost = gameState.hostId === connectionId;
+    const humanPlayers = gameState.players.filter((p) => !p.isBot);
+    const botCount = gameState.players.filter((p) => p.isBot).length;
+    const allNonHostReady = humanPlayers.every(
+      (p) => p.id === gameState.hostId || p.isReady === true
+    );
+    const canStart =
+      isHost &&
+      gameState.players.length >= 2 &&
+      allNonHostReady;
+    const canAddBot =
+      botCount < 9 && gameState.players.length < 10;
+
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-8">
         <div className="w-full max-w-md space-y-6 rounded-xl bg-slate-800/50 p-6 border border-slate-600">
@@ -186,30 +225,75 @@ export default function RoomPage() {
             {copySuccess ? "복사됨!" : "초대 링크 복사"}
           </button>
           <p className="text-slate-400 text-center text-sm">
-            플레이어 {gameState.players.length}명 · 최소 2명 필요 (최대 10명)
+            플레이어 {gameState.players.length}명 · 최소 2명 필요 (최대 10명, 봇 최대 9명)
           </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleAddBot}
+              disabled={!canAddBot}
+              className="flex-1 py-2 rounded-lg bg-slate-600 hover:bg-slate-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-slate-200 text-sm font-medium transition"
+            >
+              봇 추가
+            </button>
+          </div>
           <ul className="space-y-1 text-slate-300">
             {gameState.players.map((p) => (
-              <li key={p.id} className="flex items-center gap-2">
+              <li key={p.id} className="flex items-center gap-2 flex-wrap">
                 <span
-                  className={`w-2 h-2 rounded-full ${p.connected ? "bg-emerald-500" : "bg-slate-500"}`}
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    p.connected ? "bg-emerald-500" : "bg-slate-500"
+                  } ${p.isReady ? "ring-2 ring-amber-400 ring-offset-1 ring-offset-slate-800" : ""}`}
                 />
                 {p.name}
-                {p.connected === false && <span className="text-xs text-slate-500">(이탈)</span>}
+                {p.isBot && <span className="text-xs text-slate-500">(봇)</span>}
+                {p.id === gameState.hostId && (
+                  <span className="text-xs text-amber-400">(방장)</span>
+                )}
+                {p.connected === false && (
+                  <span className="text-xs text-slate-500">(이탈→봇)</span>
+                )}
                 {p.id === connectionId && (
                   <span className="text-xs text-emerald-400">(나)</span>
+                )}
+                {!p.isBot && p.id === connectionId && p.id !== gameState.hostId && (
+                  <span className="ml-auto">
+                    {p.isReady ? (
+                      <button
+                        type="button"
+                        onClick={handleUnready}
+                        className="text-xs px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-white"
+                      >
+                        취소
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleReady}
+                        className="text-xs px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white"
+                      >
+                        준비
+                      </button>
+                    )}
+                  </span>
                 )}
               </li>
             ))}
           </ul>
-          <button
-            type="button"
-            onClick={handleStartGame}
-            disabled={gameState.players.filter((p) => p.connected).length < 2}
-            className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold transition"
-          >
-            게임 시작
-          </button>
+          {isHost ? (
+            <button
+              type="button"
+              onClick={handleStartGame}
+              disabled={!canStart}
+              className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold transition"
+            >
+              {allNonHostReady ? "게임 시작" : "모든 플레이어 준비 시 시작 가능"}
+            </button>
+          ) : (
+            <p className="text-slate-400 text-center text-sm">
+              방장이 모든 플레이어 준비 시 게임을 시작합니다.
+            </p>
+          )}
         </div>
       </main>
     );
@@ -247,7 +331,11 @@ export default function RoomPage() {
             onPlayCard={() => {}}
           />
         </div>
-        <ResultModal state={gameState} myPlayerId={connectionId} />
+        <ResultModal
+          state={gameState}
+          myPlayerId={connectionId}
+          onClose={handleLeaveAfterGame}
+        />
       </main>
     );
   }

@@ -100,7 +100,7 @@ export function ResultModal({
                 onClick={onClose}
                 className="mt-6 w-full py-3 rounded-lg bg-slate-600 hover:bg-slate-500 text-white font-medium transition"
               >
-                닫기
+                나가기
               </motion.button>
             )}
           </div>

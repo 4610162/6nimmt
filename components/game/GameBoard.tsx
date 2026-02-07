@@ -47,12 +47,9 @@ export function GameBoard({
   const tableRows = state.tableRows;
   const phase = state.phase;
   const turnInfo = state.turnInfo;
-  const hasCommitted = myPlayerId
-    ? !!turnInfo.playedCards[myPlayerId]
-    : false;
   const isSelecting = phase === "selecting";
   const canPlayCard =
-    isSelecting && myHand.length > 0 && !hasCommitted;
+    isSelecting && myHand.length > 0;
   const waitingForRowChoice =
     phase === "resolving" &&
     turnInfo.waitingForRowChoice === myPlayerId;
@@ -161,6 +158,7 @@ export function GameBoard({
                   }`}
                 />
                 {p.name}
+                {p.isBot && <span className="text-xs text-slate-500">(봇)</span>}
                 {p.connected === false ? (
                   <span className="text-xs text-slate-500">(이탈)</span>
                 ) : committed ? (
@@ -257,7 +255,7 @@ export function GameBoard({
           </h2>
           {isSelecting && (
             <span className="text-sm text-slate-400">
-              {turnInfo.committedCount ?? 0}/{state.players.length}명 선택 완료
+              {turnInfo.committedCount ?? 0}/{state.players.length}명 선택 완료 · 클릭으로 변경/취소
             </span>
           )}
         </div>
