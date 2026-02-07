@@ -23,6 +23,7 @@ const BOT_DELAY_MAX_MS = 1500;
 
 type ClientMessage =
   | { type: "join"; name: string; sessionId?: string }
+  | { type: "setSessionId"; sessionId: string }
   | { type: "ready" }
   | { type: "unready" }
   | { type: "addBot" }
@@ -151,6 +152,13 @@ export default class GameServer implements Party.Server {
       case "join":
         await this.handleJoin(state, sender, msg.name, msg.sessionId);
         break;
+      case "setSessionId":
+        if (typeof msg.sessionId === "string") {
+          if (!state.playerSessionIds) state.playerSessionIds = {};
+          state.playerSessionIds[sender.id] = msg.sessionId;
+          await this.room.storage.put("gameState", state);
+        }
+        break;
       case "ready":
         await this.handleReady(state, sender, true);
         break;
@@ -190,9 +198,7 @@ export default class GameServer implements Party.Server {
           state.hostId = state.players.length > 0 ? state.players[0].id : undefined;
         }
         await this.room.storage.put("gameState", state);
-        this.room.broadcast(
-          JSON.stringify({ type: "state", state: getBroadcastState(state) })
-        );
+        this.broadcastStateWaiting(state);
       }
       return;
     }
@@ -228,6 +234,22 @@ export default class GameServer implements Party.Server {
 
     if (state.phase === "resolving" && state.turnInfo.waitingForRowChoice === playerId) {
       await this.resolveWithRowChoice(state, 0);
+    }
+  }
+
+  /** waiting 단계: state 브로드캐스트 후 각 연결에 yourConnectionId 전송 (클라이언트가 방장 여부 등 판단 가능) */
+  private broadcastStateWaiting(state: GameState): void {
+    this.room.broadcast(
+      JSON.stringify({ type: "state", state: getBroadcastState(state) })
+    );
+    if (state.phase !== "waiting") return;
+    const connections = Array.from(this.room.getConnections());
+    for (const conn of connections) {
+      if (conn.id) {
+        conn.send(
+          JSON.stringify({ type: "yourConnectionId", id: conn.id })
+        );
+      }
     }
   }
 
@@ -310,15 +332,7 @@ export default class GameServer implements Party.Server {
     }
 
     await this.room.storage.put("gameState", state);
-    this.room.broadcast(
-      JSON.stringify({
-        type: "state",
-        state: getBroadcastState(state),
-      })
-    );
-    sender.send(
-      JSON.stringify({ type: "yourConnectionId", id: sender.id })
-    );
+    this.broadcastStateWaiting(state);
   }
 
   private async handleReady(
@@ -331,9 +345,7 @@ export default class GameServer implements Party.Server {
     if (!player || player.isBot) return;
     player.isReady = ready;
     await this.room.storage.put("gameState", state);
-    this.room.broadcast(
-      JSON.stringify({ type: "state", state: getBroadcastState(state) })
-    );
+    this.broadcastStateWaiting(state);
   }
 
   private async handleAddBot(state: GameState, sender: Party.Connection) {
@@ -374,9 +386,7 @@ export default class GameServer implements Party.Server {
       isReady: true,
     });
     await this.room.storage.put("gameState", state);
-    this.room.broadcast(
-      JSON.stringify({ type: "state", state: getBroadcastState(state) })
-    );
+    this.broadcastStateWaiting(state);
   }
 
   private async handleStartGame(state: GameState, sender: Party.Connection) {

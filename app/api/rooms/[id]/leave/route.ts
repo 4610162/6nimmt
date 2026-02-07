@@ -14,16 +14,11 @@ export async function POST(
     return NextResponse.json({ error: "room id required" }, { status: 400 });
   }
   try {
-    let sessionId: string | undefined;
-    const secret = request.headers.get("x-internal-secret");
-    const expectedSecret = process.env.INTERNAL_LEAVE_SECRET;
-    if (secret && expectedSecret && secret === expectedSecret) {
+    const cookieStore = cookies();
+    let sessionId: string | undefined = cookieStore.get(SESSION_COOKIE)?.value;
+    if (!sessionId) {
       const body = await request.json().catch(() => ({}));
       sessionId = typeof body?.sessionId === "string" ? body.sessionId : undefined;
-    }
-    if (!sessionId) {
-      const cookieStore = cookies();
-      sessionId = cookieStore.get(SESSION_COOKIE)?.value;
     }
     if (sessionId) {
       await leaveRoom(roomId, sessionId);

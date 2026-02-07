@@ -70,6 +70,7 @@ export interface GameState {
 /** 클라이언트 -> 서버 메시지 타입 */
 export type ClientMessage =
   | { type: "join"; name: string; sessionId?: string }
+  | { type: "setSessionId"; sessionId: string }
   | { type: "ready" }
   | { type: "unready" }
   | { type: "addBot" }

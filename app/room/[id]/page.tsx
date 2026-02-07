@@ -96,6 +96,22 @@ export default function RoomPage() {
     };
   }, [roomId]);
 
+  // 연결 직후 세션 ID를 서버에 등록 → 탭/이탈 시 onClose에서 Redis leave 호출로 방 삭제 가능
+  useEffect(() => {
+    if (socket.readyState !== 1) return;
+    let cancelled = false;
+    fetch("/api/session")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.sessionId) return;
+        socket.send(JSON.stringify({ type: "setSessionId", sessionId: data.sessionId }));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [socket, socket.readyState]);
+
   const handleJoin = useCallback(async () => {
     if (!playerName.trim()) return;
     setErrorMessage(null);
