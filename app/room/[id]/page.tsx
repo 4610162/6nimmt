@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import usePartySocket from "partysocket/react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { GameState } from "@/types/game";
@@ -15,6 +15,7 @@ const PARTYKIT_HOST =
 
 export default function RoomPage() {
   const params = useParams();
+  const router = useRouter();
   const roomId = (params?.id as string) ?? "default";
 
   const [gameState, setGameState] = useState<GameState | null>(null);
