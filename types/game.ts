@@ -18,6 +18,8 @@ export interface Player {
   score: number; // 누적 패널티 점수
   isReady?: boolean;
   connected?: boolean;
+  /** 봇 여부 — true면 서버에서 카드/행 선택 자동 수행 */
+  isBot?: boolean;
 }
 
 /** 테이블의 한 행 (최대 5장) */
@@ -59,12 +61,19 @@ export interface GameState {
   turnInfo: TurnInfo;
   winner?: string; // gameEnd 시 승자 (가장 낮은 점수)
   placementOrder?: PlacementStep[]; // 카드 배치 순서 (애니메이션용, resolve 후 1회만 전송)
+  /** 방장(호스트) 플레이어 ID — 게임 시작 버튼 권한 */
+  hostId?: string;
+  /** 플레이어 ID → Redis 세션 ID (onClose 시 leaveRoom 호출용) */
+  playerSessionIds?: Record<string, string>;
 }
 
 /** 클라이언트 -> 서버 메시지 타입 */
 export type ClientMessage =
-  | { type: "join"; name: string }
+  | { type: "join"; name: string; sessionId?: string }
+  | { type: "setSessionId"; sessionId: string }
   | { type: "ready" }
+  | { type: "unready" }
+  | { type: "addBot" }
   | { type: "playCard"; cardId: number }
   | { type: "chooseRow"; rowIndex: number } // 카드가 모든 행보다 낮을 때
   | { type: "startGame" };
@@ -72,10 +81,10 @@ export type ClientMessage =
 /** 서버 -> 클라이언트 메시지 타입 */
 export type ServerMessage =
   | { type: "state"; state: GameState }
-  | { type: "playerJoined"; player: Player }
-  | { type: "playerLeft"; playerId: string }
-  | { type: "error"; message: string }
-  | { type: "phaseChanged"; phase: GamePhase };
+  | { type: "stateWithConnectionId"; state: GameState; yourConnectionId: string }
+  | { type: "botAdded"; state: GameState }
+  | { type: "yourConnectionId"; id: string }
+  | { type: "error"; message: string };
 
 /** 황소 머리 수 계산 (6 nimmt! 규칙) */
 export function getBullHeads(cardId: number): number {

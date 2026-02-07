@@ -4,9 +4,9 @@ import { cookies } from "next/headers";
 
 const SESSION_COOKIE = "ax_room_session";
 
-/** 방 퇴장 (세션 제거) */
+/** 방 퇴장 (세션 제거). PartyKit onClose 시 body.sessionId + x-internal-secret 로 호출 가능 */
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   const roomId = params?.id;
@@ -15,7 +15,11 @@ export async function POST(
   }
   try {
     const cookieStore = cookies();
-    const sessionId = cookieStore.get(SESSION_COOKIE)?.value;
+    let sessionId: string | undefined = cookieStore.get(SESSION_COOKIE)?.value;
+    if (!sessionId) {
+      const body = await request.json().catch(() => ({}));
+      sessionId = typeof body?.sessionId === "string" ? body.sessionId : undefined;
+    }
     if (sessionId) {
       await leaveRoom(roomId, sessionId);
     }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import usePartySocket from "partysocket/react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { GameState } from "@/types/game";
@@ -15,18 +15,47 @@ const PARTYKIT_HOST =
 
 export default function RoomPage() {
   const params = useParams();
+  const router = useRouter();
   const roomId = (params?.id as string) ?? "default";
 
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [playerName, setPlayerName] = useState("");
   const [hasJoined, setHasJoined] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [copySuccess, setCopySuccess] = useState(false);
   const [turnPenalty, setTurnPenalty] = useState<number | null>(null);
   const [roundEndState, setRoundEndState] = useState<GameState | null>(null);
+  const [connectionIdFromServer, setConnectionIdFromServer] = useState<string | null>(null);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
   const prevScoreRef = useRef<number | null>(null);
   const roundEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectionIdRef = useRef<string | null>(null);
+  const socketRef = useRef<ReturnType<typeof usePartySocket> | null>(null);
+
+  const applyGameStateUpdate = useCallback((state: GameState, myId: string | null) => {
+    if (state.phase === "roundEnd") {
+      setRoundEndState(state);
+      if (roundEndTimerRef.current) clearTimeout(roundEndTimerRef.current);
+      roundEndTimerRef.current = setTimeout(() => {
+        setRoundEndState(null);
+        roundEndTimerRef.current = null;
+      }, 5000);
+    }
+    if (state.placementOrder && myId) {
+      const me = state.players.find((p) => p.id === myId);
+      const prev = prevScoreRef.current ?? 0;
+      if (me != null && me.score > prev) {
+        setTurnPenalty(me.score - prev);
+        setTimeout(() => setTurnPenalty(null), 2500);
+      }
+      prevScoreRef.current = me?.score ?? null;
+    } else if (myId) {
+      const me = state.players.find((p) => p.id === myId);
+      prevScoreRef.current = me?.score ?? null;
+    }
+    setGameState(state);
+    setErrorMessage(null);
+  }, []);
 
   const socket = usePartySocket({
     host: PARTYKIT_HOST,
@@ -35,38 +64,33 @@ export default function RoomPage() {
     onMessage(event) {
       try {
         const msg = JSON.parse(event.data as string);
-        if (msg.type === "state" && msg.state) {
+
+        if (msg.type === "stateWithConnectionId" && msg.state != null) {
           const state = msg.state as GameState;
+          const id = typeof msg.yourConnectionId === "string" ? msg.yourConnectionId : "";
+          connectionIdRef.current = id || null;
+          setConnectionIdFromServer(id || null);
+          applyGameStateUpdate(state, id || (connectionIdRef.current ?? null));
+          return;
+        }
 
-          if (state.phase === "roundEnd") {
-            setRoundEndState(state);
-            if (roundEndTimerRef.current) clearTimeout(roundEndTimerRef.current);
-            roundEndTimerRef.current = setTimeout(() => {
-              setRoundEndState(null);
-              roundEndTimerRef.current = null;
-            }, 5000);
-          }
-
-          const myId = socket.id ?? null;
-          if (state.placementOrder && myId) {
-            const me = state.players.find((p) => p.id === myId);
-            const prev = prevScoreRef.current ?? 0;
-            if (me != null && me.score > prev) {
-              setTurnPenalty(me.score - prev);
-              setTimeout(() => setTurnPenalty(null), 2500);
-            }
-            prevScoreRef.current = me?.score ?? null;
-          } else if (myId) {
-            const me = state.players.find((p) => p.id === myId);
-            prevScoreRef.current = me?.score ?? null;
-          }
-
-          setGameState(state);
+        if (msg.type === "state" && msg.state) {
+          applyGameStateUpdate(
+            msg.state as GameState,
+            connectionIdRef.current ?? socket.id ?? null
+          );
+        }
+        if (msg.type === "botAdded" && msg.state != null) {
+          setGameState(msg.state as GameState);
           setErrorMessage(null);
         }
         if (msg.type === "error") {
           setErrorMessage(msg.message ?? "오류가 발생했습니다.");
           console.error("Server error:", msg.message);
+        }
+        if (msg.type === "yourConnectionId" && typeof msg.id === "string") {
+          connectionIdRef.current = msg.id;
+          setConnectionIdFromServer(msg.id);
         }
       } catch (e) {
         console.error("Parse error:", e);
@@ -74,7 +98,8 @@ export default function RoomPage() {
     },
   });
 
-  const connectionId = socket.id ?? null;
+  const connectionId = connectionIdFromServer ?? socket.id ?? null;
+  socketRef.current = socket;
 
   useEffect(() => {
     return () => {
@@ -90,11 +115,37 @@ export default function RoomPage() {
     };
   }, [roomId]);
 
-  const handleJoin = useCallback(() => {
+  // 연결 직후 세션 ID를 서버에 등록 → 탭/이탈 시 onClose에서 Redis leave 호출로 방 삭제 가능
+  useEffect(() => {
+    if (socket.readyState !== 1) return;
+    let cancelled = false;
+    fetch("/api/session")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.sessionId) return;
+        socket.send(JSON.stringify({ type: "setSessionId", sessionId: data.sessionId }));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [socket, socket.readyState]);
+
+  const handleJoin = useCallback(async () => {
     if (!playerName.trim()) return;
     setErrorMessage(null);
+    let sessionId: string | undefined;
+    try {
+      const res = await fetch("/api/session");
+      if (res.ok) {
+        const data = await res.json();
+        sessionId = data.sessionId ?? undefined;
+      }
+    } catch {
+      // ignore
+    }
     socket.send(
-      JSON.stringify({ type: "join", name: playerName.trim() })
+      JSON.stringify({ type: "join", name: playerName.trim(), sessionId })
     );
     setHasJoined(true);
   }, [playerName, socket]);
@@ -102,6 +153,77 @@ export default function RoomPage() {
   const handleStartGame = useCallback(() => {
     socket.send(JSON.stringify({ type: "startGame" }));
   }, [socket]);
+
+  const handleReady = useCallback(() => {
+    socket.send(JSON.stringify({ type: "ready" }));
+  }, [socket]);
+
+  const handleUnready = useCallback(() => {
+    socket.send(JSON.stringify({ type: "unready" }));
+  }, [socket]);
+
+  const handleAddBot = useCallback(() => {
+    const ws = socketRef.current;
+    if (!ws || ws.readyState !== 1) return;
+    try {
+      ws.send(JSON.stringify({ type: "addBot" }));
+    } catch (e) {
+      console.error("addBot send failed", e);
+      setErrorMessage("봇 추가 전송 실패");
+    }
+  }, []);
+
+  const handleLeaveAfterGame = useCallback(() => {
+    router.push("/");
+  }, [router]);
+
+  const handleLeaveRoom = useCallback(() => {
+    setShowLeaveConfirm(true);
+  }, []);
+
+  const handleLeaveConfirm = useCallback(() => {
+    setShowLeaveConfirm(false);
+    router.push("/");
+  }, [router]);
+
+  const handleLeaveCancel = useCallback(() => {
+    setShowLeaveConfirm(false);
+  }, []);
+
+  const leaveConfirmModal = showLeaveConfirm && (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+      onClick={handleLeaveCancel}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="leave-confirm-message"
+    >
+      <div
+        className="w-full max-w-sm rounded-xl bg-slate-800 border border-slate-600 p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p id="leave-confirm-message" className="text-white text-center mb-6">
+          방을 나가시겠습니까? 이탈한 것으로 처리됩니다.
+        </p>
+        <div className="flex gap-3 justify-end">
+          <button
+            type="button"
+            onClick={handleLeaveCancel}
+            className="px-4 py-2 rounded-lg border border-slate-500 text-slate-300 hover:bg-slate-700 transition"
+          >
+            취소
+          </button>
+          <button
+            type="button"
+            onClick={handleLeaveConfirm}
+            className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition"
+          >
+            확인
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   const handlePlayCard = useCallback(
     (cardId: number) => {
@@ -116,14 +238,6 @@ export default function RoomPage() {
     },
     [socket]
   );
-
-  const handleCopyInviteLink = useCallback(() => {
-    const url = typeof window !== "undefined" ? window.location.href : "";
-    navigator.clipboard.writeText(url).then(() => {
-      setCopySuccess(true);
-      setTimeout(() => setCopySuccess(false), 2000);
-    });
-  }, []);
 
   if (!gameState) {
     return (
@@ -172,46 +286,112 @@ export default function RoomPage() {
   }
 
   if (gameState.phase === "waiting") {
+    const humanPlayers = gameState.players.filter((p) => !p.isBot);
+    const isHost =
+      gameState.hostId === connectionId ||
+      (humanPlayers.length === 1 && connectionId !== null && humanPlayers.some((p) => p.id === connectionId));
+    const botCount = gameState.players.filter((p) => p.isBot).length;
+    const allNonHostReady = humanPlayers.every(
+      (p) => p.id === gameState.hostId || p.isReady === true
+    );
+    const canStart =
+      isHost &&
+      gameState.players.length >= 2 &&
+      allNonHostReady;
+    const canAddBot =
+      connectionId !== null &&
+      botCount < 9 &&
+      gameState.players.length < 10 &&
+      socket.readyState === 1;
+
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center p-8">
-        <div className="w-full max-w-md space-y-6 rounded-xl bg-slate-800/50 p-6 border border-slate-600">
-          <h1 className="text-xl font-bold text-white text-center">
-            대기실
-          </h1>
-          <button
-            type="button"
-            onClick={handleCopyInviteLink}
-            className="w-full py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition"
-          >
-            {copySuccess ? "복사됨!" : "초대 링크 복사"}
-          </button>
+      <>
+        <main className="flex min-h-screen flex-col items-center justify-center p-8">
+          <div className="w-full max-w-md space-y-6 rounded-xl bg-slate-800/50 p-6 border border-slate-600">
+            <h1 className="text-xl font-bold text-white text-center">
+              대기실
+            </h1>
           <p className="text-slate-400 text-center text-sm">
-            플레이어 {gameState.players.length}명 · 최소 2명 필요 (최대 10명)
+            플레이어 {gameState.players.length}명 · 최소 2명 필요 (최대 10명, 봇 최대 9명)
           </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleAddBot}
+              disabled={!canAddBot}
+              className="flex-1 py-2 rounded-lg bg-slate-600 hover:bg-slate-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-slate-200 text-sm font-medium transition"
+            >
+              봇 추가
+            </button>
+          </div>
           <ul className="space-y-1 text-slate-300">
             {gameState.players.map((p) => (
-              <li key={p.id} className="flex items-center gap-2">
+              <li key={p.id} className="flex items-center gap-2 flex-wrap">
                 <span
-                  className={`w-2 h-2 rounded-full ${p.connected ? "bg-emerald-500" : "bg-slate-500"}`}
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    p.connected ? "bg-emerald-500" : "bg-slate-500"
+                  } ${p.isReady ? "ring-2 ring-amber-400 ring-offset-1 ring-offset-slate-800" : ""}`}
                 />
                 {p.name}
-                {p.connected === false && <span className="text-xs text-slate-500">(이탈)</span>}
+                {p.isBot && <span className="text-xs text-slate-500">(봇)</span>}
+                {p.id === gameState.hostId && (
+                  <span className="text-xs text-amber-400">(방장)</span>
+                )}
+                {p.connected === false && (
+                  <span className="text-xs text-slate-500">(이탈→봇)</span>
+                )}
                 {p.id === connectionId && (
                   <span className="text-xs text-emerald-400">(나)</span>
+                )}
+                {!p.isBot && p.id === connectionId && p.id !== gameState.hostId && (
+                  <span className="ml-auto">
+                    {p.isReady ? (
+                      <button
+                        type="button"
+                        onClick={handleUnready}
+                        className="text-xs px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-white"
+                      >
+                        취소
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleReady}
+                        className="text-xs px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white"
+                      >
+                        준비
+                      </button>
+                    )}
+                  </span>
                 )}
               </li>
             ))}
           </ul>
+          {isHost ? (
+            <button
+              type="button"
+              onClick={handleStartGame}
+              disabled={!canStart}
+              className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold transition"
+            >
+              {allNonHostReady ? "게임 시작" : "모든 플레이어 준비 시 시작 가능"}
+            </button>
+          ) : (
+            <p className="text-slate-400 text-center text-sm">
+              방장이 모든 플레이어 준비 시 게임을 시작합니다.
+            </p>
+          )}
           <button
             type="button"
-            onClick={handleStartGame}
-            disabled={gameState.players.filter((p) => p.connected).length < 2}
-            className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold transition"
+            onClick={handleLeaveRoom}
+            className="w-full py-2 rounded-lg bg-slate-600 hover:bg-slate-500 text-slate-200 text-sm font-medium transition"
           >
-            게임 시작
+            방 나가기
           </button>
         </div>
       </main>
+        {leaveConfirmModal}
+      </>
     );
   }
 
@@ -221,10 +401,10 @@ export default function RoomPage() {
       <div className="flex items-center gap-3">
         <button
           type="button"
-          onClick={handleCopyInviteLink}
-          className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition"
+          onClick={handleLeaveRoom}
+          className="px-3 py-1.5 rounded-lg bg-slate-600 hover:bg-slate-500 text-slate-200 text-sm font-medium transition"
         >
-          {copySuccess ? "복사됨!" : "초대 링크 복사"}
+          방 나가기
         </button>
         <div className="flex items-center gap-4 text-sm text-slate-400">
           <span
@@ -238,56 +418,66 @@ export default function RoomPage() {
 
   if (gameState.phase === "gameEnd") {
     return (
-      <main className="flex min-h-screen flex-col">
-        {headerContent}
-        <div className="flex-1 flex items-center justify-center opacity-30">
-          <GameBoard
+      <>
+        <main className="flex min-h-screen flex-col">
+          {headerContent}
+          <div className="flex-1 flex items-center justify-center opacity-30">
+            <GameBoard
+              state={gameState}
+              myPlayerId={connectionId}
+              onPlayCard={() => {}}
+            />
+          </div>
+          <ResultModal
             state={gameState}
             myPlayerId={connectionId}
-            onPlayCard={() => {}}
+            onClose={handleLeaveAfterGame}
           />
-        </div>
-        <ResultModal state={gameState} myPlayerId={connectionId} />
-      </main>
+        </main>
+        {leaveConfirmModal}
+      </>
     );
   }
 
   return (
-    <main className="flex min-h-screen flex-col">
-      {headerContent}
-      <GameBoard
-        state={gameState}
-        myPlayerId={connectionId}
-        onPlayCard={handlePlayCard}
-        onChooseRow={handleChooseRow}
-      />
-
-      <AnimatePresence>
-        {turnPenalty != null && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-30 px-6 py-3 rounded-xl bg-amber-500/95 text-slate-900 font-bold shadow-lg"
-          >
-            이번 턴 벌점: +{turnPenalty}점
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {roundEndState && (
-        <RoundEndModal
-          state={roundEndState}
+    <>
+      <main className="flex min-h-screen flex-col">
+        {headerContent}
+        <GameBoard
+          state={gameState}
           myPlayerId={connectionId}
-          onDismiss={() => {
-            setRoundEndState(null);
-            if (roundEndTimerRef.current) {
-              clearTimeout(roundEndTimerRef.current);
-              roundEndTimerRef.current = null;
-            }
-          }}
+          onPlayCard={handlePlayCard}
+          onChooseRow={handleChooseRow}
         />
-      )}
-    </main>
+
+        <AnimatePresence>
+          {turnPenalty != null && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="fixed bottom-24 left-1/2 -translate-x-1/2 z-30 px-6 py-3 rounded-xl bg-amber-500/95 text-slate-900 font-bold shadow-lg"
+            >
+              이번 턴 벌점: +{turnPenalty}점
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {roundEndState && (
+          <RoundEndModal
+            state={roundEndState}
+            myPlayerId={connectionId}
+            onDismiss={() => {
+              setRoundEndState(null);
+              if (roundEndTimerRef.current) {
+                clearTimeout(roundEndTimerRef.current);
+                roundEndTimerRef.current = null;
+              }
+            }}
+          />
+        )}
+      </main>
+      {leaveConfirmModal}
+    </>
   );
 }

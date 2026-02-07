@@ -7,8 +7,8 @@ const ROOM_LIST_KEY = "ax:rooms:list";
 const ROOM_META_PREFIX = "ax:room:";
 const ROOM_MEMBERS_PREFIX = "ax:room:members:";
 const MAX_PLAYERS = 10;
-/** 30분 동안 활동 없으면 방 만료 */
-const ROOM_TTL_SECONDS = 30 * 60;
+/** 1분 동안 활동 없으면 방 만료 */
+const ROOM_TTL_SECONDS = 60;
 
 export interface RoomMeta {
   roomId: string;
@@ -164,6 +164,10 @@ export async function leaveRoom(roomId: string, sessionId: string): Promise<void
   const members = memoryStore.members.get(roomId);
   if (members) {
     members.delete(sessionId);
-    if (members.size === 0) memoryStore.members.delete(roomId);
+    if (members.size === 0) {
+      memoryStore.members.delete(roomId);
+      memoryStore.meta.delete(roomId);
+      memoryStore.roomIds.delete(roomId);
+    }
   }
 }
