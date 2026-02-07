@@ -24,9 +24,11 @@ export default function RoomPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [turnPenalty, setTurnPenalty] = useState<number | null>(null);
   const [roundEndState, setRoundEndState] = useState<GameState | null>(null);
+  const [connectionIdFromServer, setConnectionIdFromServer] = useState<string | null>(null);
 
   const prevScoreRef = useRef<number | null>(null);
   const roundEndTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectionIdRef = useRef<string | null>(null);
 
   const socket = usePartySocket({
     host: PARTYKIT_HOST,
@@ -47,7 +49,7 @@ export default function RoomPage() {
             }, 5000);
           }
 
-          const myId = socket.id ?? null;
+          const myId = connectionIdRef.current ?? socket.id ?? null;
           if (state.placementOrder && myId) {
             const me = state.players.find((p) => p.id === myId);
             const prev = prevScoreRef.current ?? 0;
@@ -68,13 +70,17 @@ export default function RoomPage() {
           setErrorMessage(msg.message ?? "오류가 발생했습니다.");
           console.error("Server error:", msg.message);
         }
+        if (msg.type === "yourConnectionId" && typeof msg.id === "string") {
+          connectionIdRef.current = msg.id;
+          setConnectionIdFromServer(msg.id);
+        }
       } catch (e) {
         console.error("Parse error:", e);
       }
     },
   });
 
-  const connectionId = socket.id ?? null;
+  const connectionId = connectionIdFromServer ?? socket.id ?? null;
 
   useEffect(() => {
     return () => {

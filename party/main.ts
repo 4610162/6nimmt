@@ -130,6 +130,9 @@ export default class GameServer implements Party.Server {
     connection.send(
       JSON.stringify({ type: "state", state: getBroadcastState(state) })
     );
+    connection.send(
+      JSON.stringify({ type: "yourConnectionId", id: connection.id })
+    );
   }
 
   async onMessage(message: string | ArrayBuffer, sender: Party.Connection) {
@@ -173,13 +176,32 @@ export default class GameServer implements Party.Server {
     const state = (await this.room.storage.get<GameState>("gameState")) ?? createInitialState();
     const playerId = connection.id;
     const player = state.players.find((p) => p.id === playerId);
+    const sessionId = state.playerSessionIds?.[playerId];
+
+    if (state.phase === "waiting") {
+      // 시작 전 이탈: 봇으로 대체하지 않고 목록에서 제거, Redis leave 호출
+      if (sessionId) {
+        await this.callLeaveRoom(this.room.id, sessionId);
+      }
+      if (player) {
+        state.players = state.players.filter((p) => p.id !== playerId);
+        delete state.playerSessionIds?.[playerId];
+        if (state.hostId === playerId) {
+          state.hostId = state.players.length > 0 ? state.players[0].id : undefined;
+        }
+        await this.room.storage.put("gameState", state);
+        this.room.broadcast(
+          JSON.stringify({ type: "state", state: getBroadcastState(state) })
+        );
+      }
+      return;
+    }
+
     if (!player) return;
 
-    // 이탈한 플레이어를 삭제하지 않고 봇으로 전환
+    // 게임 중 이탈: 봇으로 전환
     (player as Player).isBot = true;
     player.connected = false;
-
-    const sessionId = state.playerSessionIds?.[playerId];
     if (sessionId) {
       await this.callLeaveRoom(this.room.id, sessionId);
     }
@@ -189,7 +211,6 @@ export default class GameServer implements Party.Server {
       JSON.stringify({ type: "state", state: getBroadcastState(state) })
     );
 
-    // 봇 로직: selecting 시 카드 자동 제출
     if (state.phase === "selecting" && !state.turnInfo.playedCards[playerId] && player.hand.length > 0) {
       const botCard = player.hand[Math.floor(Math.random() * player.hand.length)];
       state.turnInfo.playedCards[playerId] = botCard;
@@ -294,6 +315,9 @@ export default class GameServer implements Party.Server {
         type: "state",
         state: getBroadcastState(state),
       })
+    );
+    sender.send(
+      JSON.stringify({ type: "yourConnectionId", id: sender.id })
     );
   }
 
