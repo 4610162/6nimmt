@@ -374,7 +374,7 @@ export default class GameServer implements Party.Server {
       return;
     }
     const botId = `bot_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    state.players.push({
+    const newBot: Player = {
       id: botId,
       name: `봇 ${botCount + 1}`,
       hand: [],
@@ -383,9 +383,17 @@ export default class GameServer implements Party.Server {
       connected: true,
       isBot: true,
       isReady: true,
-    });
-    await this.room.storage.put("gameState", state);
-    this.broadcastStateWaiting(state, sender);
+    };
+    const newState: GameState = {
+      ...state,
+      players: [...state.players, newBot],
+    };
+    await this.room.storage.put("gameState", newState);
+    const broadcastState = getBroadcastState(newState);
+    this.room.broadcast(
+      JSON.stringify({ type: "state", state: broadcastState })
+    );
+    this.broadcastStateWaiting(newState, sender);
   }
 
   private async handleStartGame(state: GameState, sender: Party.Connection) {
