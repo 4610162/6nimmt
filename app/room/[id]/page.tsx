@@ -51,7 +51,7 @@ export default function RoomPage() {
               roundEndTimerRef.current = null;
             }, 5000);
           }
-          const myId = id || connectionIdRef.current ?? null;
+          const myId = id || (connectionIdRef.current ?? null);
           if (state.placementOrder && myId) {
             const me = state.players.find((p) => p.id === myId);
             const prev = prevScoreRef.current ?? 0;
