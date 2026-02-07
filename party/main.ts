@@ -238,17 +238,23 @@ export default class GameServer implements Party.Server {
   }
 
   /** waiting 단계: 각 연결마다 state + yourConnectionId를 한 메시지로 전송 (클라이언트가 항상 올바른 connectionId 수신) */
-  private broadcastStateWaiting(state: GameState): void {
+  private broadcastStateWaiting(state: GameState, sender?: Party.Connection): void {
     const broadcastState = getBroadcastState(state);
+    const payload = (connId: string) =>
+      JSON.stringify({
+        type: "stateWithConnectionId",
+        state: broadcastState,
+        yourConnectionId: connId,
+      });
+    if (sender?.id) {
+      sender.send(payload(sender.id));
+    }
     const connections = Array.from(this.room.getConnections());
+    const senderId = sender?.id ?? "";
     for (const conn of connections) {
-      conn.send(
-        JSON.stringify({
-          type: "stateWithConnectionId",
-          state: broadcastState,
-          yourConnectionId: conn.id ?? "",
-        })
-      );
+      if (conn.id && conn.id !== senderId) {
+        conn.send(payload(conn.id));
+      }
     }
   }
 
@@ -379,7 +385,7 @@ export default class GameServer implements Party.Server {
       isReady: true,
     });
     await this.room.storage.put("gameState", state);
-    this.broadcastStateWaiting(state);
+    this.broadcastStateWaiting(state, sender);
   }
 
   private async handleStartGame(state: GameState, sender: Party.Connection) {
