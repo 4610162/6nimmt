@@ -346,15 +346,13 @@ export default function RoomPage() {
     <header className="flex items-center justify-between p-4 border-b border-slate-700 bg-slate-900/50">
       <h1 className="text-lg font-bold text-white">6 nimmt!</h1>
       <div className="flex items-center gap-3">
-        {gameState.phase !== "waiting" && (
-          <button
-            type="button"
-            onClick={handleLeaveRoom}
-            className="px-3 py-1.5 rounded-lg bg-slate-600 hover:bg-slate-500 text-slate-200 text-sm font-medium transition"
-          >
-            방 나가기
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={handleLeaveRoom}
+          className="px-3 py-1.5 rounded-lg bg-slate-600 hover:bg-slate-500 text-slate-200 text-sm font-medium transition"
+        >
+          방 나가기
+        </button>
         <div className="flex items-center gap-4 text-sm text-slate-400">
           <span
             className={`w-2 h-2 rounded-full animate-pulse ${socket.readyState === 1 ? "bg-emerald-500" : "bg-amber-500"}`}
