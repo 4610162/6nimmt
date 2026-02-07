@@ -12,7 +12,6 @@ import {
   resolveTurn,
 } from "../lib/game";
 
-/** 게임 시작 최소 인원 (실제 플레이어 + 봇 합산, 예: 실제 1명 + 봇 1명 = 2명으로 시작 가능) */
 const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 10;
 const MAX_BOTS = 9;
@@ -361,14 +360,15 @@ export default class GameServer implements Party.Server {
       );
       return;
     }
-    const botCount = state.players.filter((p) => p.isBot).length;
+    const players = Array.isArray(state.players) ? state.players : [];
+    const botCount = players.filter((p) => p.isBot).length;
     if (botCount >= MAX_BOTS) {
       sender.send(
         JSON.stringify({ type: "error", message: `봇은 최대 ${MAX_BOTS}명까지 추가할 수 있습니다.` })
       );
       return;
     }
-    if (state.players.length >= MAX_PLAYERS) {
+    if (players.length >= MAX_PLAYERS) {
       sender.send(
         JSON.stringify({ type: "error", message: "방이 가득 찼습니다." })
       );
@@ -387,13 +387,26 @@ export default class GameServer implements Party.Server {
     };
     const newState: GameState = {
       ...state,
-      players: [...state.players, newBot],
+      players: [...players, newBot],
     };
-    await this.room.storage.put("gameState", newState);
-    const broadcastState = getBroadcastState(newState);
-    this.room.broadcast(
-      JSON.stringify({ type: "state", state: broadcastState })
-    );
+    try {
+      await this.room.storage.put("gameState", newState);
+    } catch (e) {
+      console.error("handleAddBot storage.put", e);
+      sender.send(JSON.stringify({ type: "error", message: "상태 저장 실패" }));
+      return;
+    }
+    let broadcastState: GameState;
+    try {
+      broadcastState = getBroadcastState(newState);
+    } catch (e) {
+      console.error("handleAddBot getBroadcastState", e);
+      sender.send(JSON.stringify({ type: "error", message: "상태 생성 실패" }));
+      return;
+    }
+    const stateMsg = JSON.stringify({ type: "state", state: broadcastState });
+    sender.send(JSON.stringify({ type: "botAdded", state: broadcastState }));
+    this.room.broadcast(stateMsg);
     this.broadcastStateWaiting(newState, sender);
   }
 
@@ -427,7 +440,7 @@ export default class GameServer implements Party.Server {
       sender.send(
         JSON.stringify({
           type: "error",
-          message: `최소 ${MIN_PLAYERS}명(플레이어+봇)이 필요합니다.`,
+          message: `최소 ${MIN_PLAYERS}명이 필요합니다.`,
         })
       );
       return;
